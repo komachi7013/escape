@@ -1,6 +1,8 @@
 .DS_Store
 .codex/
 .venv/
+.venv
 
 dist/
 node_modules/
+artifacts/**/earlier/

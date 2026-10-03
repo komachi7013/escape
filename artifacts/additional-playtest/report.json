@@ -1,0 +1,16 @@
+{
+  "browser": "154.0.8037.98",
+  "checks": [
+    "title BGM plays before game start",
+    "title mute and unmute",
+    "legacy clear migration",
+    "first room solve and next-stage transition",
+    "crate drag discovers mirror, reload",
+    "plant dragging, incorrect placement and recovery",
+    "mirror light, consumed item reload, garden escape",
+    "globe discovery, chart clue, Caesar decoding and reload",
+    "telescope pointer rotation, Morse decoding and wrong answer recovery",
+    "all three clears and final resume"
+  ],
+  "errors": []
+}

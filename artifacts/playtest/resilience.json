@@ -1,0 +1,10 @@
+{
+  "checks": [
+    "storage unavailable still playable",
+    "corrupt save starts safely",
+    "asset failure explicit retry",
+    "WebGL unavailable explicit retry",
+    "WebGL context loss explicit retry"
+  ],
+  "errors": []
+}
