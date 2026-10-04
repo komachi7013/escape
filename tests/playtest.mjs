@@ -1,0 +1,58 @@
+import {chromium,expect} from '@playwright/test';
+import {mkdir,writeFile} from 'node:fs/promises';
+const browser=await chromium.launch({channel:'chrome',headless:process.env.HEADED!=='1'});
+const context=await browser.newContext({viewport:{width:1280,height:720}});
+await context.addInitScript(()=>{const Native=window.AudioContext;window.__audioContexts=[];window.AudioContext=class extends Native{constructor(...args){super(...args);window.__audioContexts.push(this);}createGain(){const g=super.createGain();this.__gains??=[];this.__gains.push(g);return g;}};});
+const page=await context.newPage(),errors=[],checks=[];
+page.on('pageerror',e=>errors.push(e.message));
+page.on('console',m=>{if(m.type()==='error')errors.push(`${m.text()} @ ${m.location().url}`);});
+await mkdir('artifacts/playtest',{recursive:true});
+const shot=name=>page.screenshot({path:`artifacts/playtest/${name}.png`});
+const button=name=>page.getByRole('button',{name,exact:true});
+const close=async()=>{await button('閉じる').click();await expect(page.locator('#modal-root')).toBeHidden();};
+const inspect=async(name,title)=>{await button(name).click();await expect(page.getByRole('heading',{name:title,exact:true})).toBeVisible({timeout:7000});};
+const save=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('old-inn-escape:v1')));
+const resume=async()=>{await page.reload();await button('続きから').click();await expect(page.locator('#hud')).toBeVisible({timeout:7000});};
+try{
+  await page.goto(process.env.GAME_URL??'http://127.0.0.1:5173');
+  await expect(button('ゲーム開始')).toBeVisible();await shot('title-1280');checks.push('boot and title');
+  await button('ゲーム開始').click();await expect(page.locator('#hud')).toBeVisible({timeout:7000});await shot('room-1280');
+  const sound=await page.evaluate(async()=>{const ctx=window.__audioContexts[0];const analyser=ctx.createAnalyser();ctx.__gains[0].connect(analyser);await new Promise(r=>setTimeout(r,400));const data=new Float32Array(analyser.fftSize);analyser.getFloatTimeDomainData(data);ctx.__gains[0].disconnect(analyser);return{state:ctx.state,count:window.__audioContexts.length,peak:Math.max(...data.map(Math.abs))};});expect(sound.state).toBe('running');expect(sound.count).toBe(1);expect(sound.peak).toBeGreaterThan(.001);checks.push('BGM generates a nonzero audio signal');
+  expect(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight)).toBeTruthy();checks.push('no scrolling');
+  await inspect('本棚','しるしのある本棚');await expect(page.locator('[data-book="葉"]')).toBeDisabled();await close();
+  await inspect('紋章の宝箱','紋章の宝箱');await expect(page.locator('.symbol-button').first()).toBeDisabled();await close();checks.push('prerequisite locks');
+  await inspect('壁の絵','天体の絵');await expect(page.locator('.painting-row').nth(0).locator('span')).toHaveCount(2);await expect(page.locator('.painting-row').nth(1).locator('span')).toHaveCount(4);await expect(page.locator('.painting-row').nth(2).locator('span')).toHaveCount(3);await shot('painting');
+  await page.mouse.wheel(0,-350);await expect(page.locator('#zoom-text')).toHaveText('1.0×');await close();
+  await inspect('机のメモ','机に残されたメモ');await expect(page.locator('.clue')).toContainText('太陽');await close();
+  await inspect('数字錠の引き出し','引き出しの数字錠');await page.getByLabel('3桁の暗証番号').fill('111');await button('解錠する').click();await expect(page.locator('#lock-message')).toContainText('まだ開かない');
+  await page.getByLabel('3桁の暗証番号').fill('243');await button('解錠する').click();await expect(page.locator('.reward-label')).toHaveText('紙片を手に入れた。');await shot('paper-found');await button('探索を続ける').click();checks.push('drawer wrong and correct');
+  await resume();expect((await save()).drawer).toBeTruthy();await expect(button('紙片を選択')).toBeVisible();
+  await button('紙片を選択').click();await button('紙片を読む').click();await expect(page.locator('.clue')).toContainText('葉');await close();await button('選択解除').click();
+  await inspect('本棚','しるしのある本棚');await page.locator('[data-book="波"]').click();await expect(page.locator('#sequence-message')).toContainText('最初から');
+  for(const n of ['葉','波','炎'])await page.locator(`[data-book="${n}"]`).click();await expect(page.locator('.reward-label')).toHaveText('紋章を手に入れた。');await button('探索を続ける').click();checks.push('book sequence and paper reread');
+  await button('紋章を選択').click();await inspect('ベッド','旅人のベッド');await expect(page.locator('.message')).toContainText('ここには使えない');await close();expect((await save()).crestUsed).toBeFalsy();
+  await inspect('紋章の宝箱','紋章の宝箱');await expect(page.locator('[data-crest="月"]')).toBeEnabled();await close();
+  await resume();expect((await save()).crestUsed).toBeTruthy();await expect(button('紋章を選択')).toHaveCount(0);checks.push('wrong item use and consumed crest reload');
+  await inspect('壁の旗','壁に掛けられた旗');await expect(page.locator('.banner .symbol small')).toHaveText(['月','王冠','太陽','星']);await shot('flag');await close();
+  await inspect('紋章の宝箱','紋章の宝箱');await page.locator('[data-crest="太陽"]').click();await expect(page.locator('#sequence-message')).toContainText('最初から');
+  for(const n of ['月','王冠','太陽','星'])await page.locator(`[data-crest="${n}"]`).click();await expect(page.locator('.reward-label')).toHaveText('出口の鍵を手に入れた。');await button('探索を続ける').click();checks.push('chest wrong and correct');
+  await resume();await button('出口の鍵を選択').click();await inspect('出口の扉','出口の扉');await expect(button('開ける')).toBeVisible();await close();
+  await resume();expect((await save()).doorUnlocked).toBeTruthy();await expect(button('出口の鍵を選択')).toHaveCount(0);checks.push('consumed key reload');
+  await button('拡大').click();await expect(page.locator('#zoom-text')).toHaveText('1.2×');await button('全体表示').click();await expect(page.locator('#zoom-text')).toHaveText('1.0×');
+  await page.mouse.move(700,400);await page.mouse.wheel(0,-250);await expect(page.locator('#zoom-text')).toHaveText('1.1×');await button('全体表示').click();
+  await button('全画面').click();await expect.poll(()=>page.evaluate(()=>!!document.fullscreenElement)).toBeTruthy();await button('全画面解除').click();checks.push('zoom and fullscreen');
+  await page.setViewportSize({width:1920,height:1080});await shot('room-1920');expect(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight)).toBeTruthy();
+  for(const target of ['壁の絵','壁の旗','本棚','数字錠の引き出し','出口の扉'])await expect(button(target)).toBeInViewport();checks.push('1920 viewport and resize');
+  await inspect('出口の扉','出口の扉');await button('開ける').click();await expect(page.getByRole('heading',{name:'脱出成功！',exact:true})).toBeVisible({timeout:6000});await shot('escaped');checks.push('full escape playthrough');
+  await page.reload();await button('続きから').click();await expect(page.locator('#result')).toBeVisible({timeout:6000});checks.push('escaped reload');
+  await button('もう一度遊ぶ').click();await button('戻る').click();await expect(page.locator('#result')).toBeVisible();
+  await button('もう一度遊ぶ').click();await button('最初から始める').click();await expect(page.locator('#hud')).toBeVisible({timeout:6000});expect((await save()).drawer).toBeFalsy();checks.push('reset confirmation');
+  await page.setViewportSize({width:1280,height:720});await button('ヒント').click();await button('ヒント1を見る').click();await button('ヒント2を見る').click();await button('答えを表示する（3段階目）').click();await expect(page.getByRole('heading',{name:'答えを表示します',exact:true})).toBeVisible();await button('答えを表示する').click();await expect(page.locator('.hint-list')).toContainText('243');await close();await resume();expect((await save()).hints[0]).toBe(3);checks.push('staged hints and persistence');
+  // Mid-movement retarget: only the last target may open a dialog.
+  await button('紋章の宝箱').click();await page.waitForTimeout(80);await button('壁の絵').click();await expect(page.getByRole('heading',{name:'天体の絵',exact:true})).toBeVisible({timeout:6000});await close();await page.waitForTimeout(2000);await expect(page.locator('#modal-root')).toBeHidden();checks.push('retarget during movement');
+  await button('音と設定').click();await page.getByLabel('BGMの音量').fill('0.15');await page.locator('#mute-sfx').check();await button('音の再生を試す').click();await expect(page.locator('#audio-message')).toContainText('開始');await close();await resume();await button('音と設定').click();await expect(page.getByLabel('BGMの音量')).toHaveValue('0.15');await expect(page.locator('#mute-sfx')).toBeChecked();await close();checks.push('audio settings persist and resume');
+  expect(errors).toEqual([]);
+  await writeFile('artifacts/playtest/report.json',JSON.stringify({date:'2026-10-03',browser:await browser.version(),viewportSizes:['1280x720','1920x1080'],checks,errors},null,2));
+  console.log(JSON.stringify({checks,errors},null,2));
+}catch(e){await shot('failure');console.error(e);await writeFile('artifacts/playtest/failure.json',JSON.stringify({checks,errors,error:String(e)},null,2));process.exitCode=1;}
+finally{await browser.close();}

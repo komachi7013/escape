@@ -1,0 +1,9 @@
+{
+  "checks": [
+    "title automatically plays with autoplay permission, no interaction",
+    "repeated starts and title return use one audio context and scheduler",
+    "title mute is effective and persists"
+  ],
+  "signal": 0.013450400903820992,
+  "errors": []
+}
